@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -e
+
+if ! command -v fzf &> /dev/null
+then
+    echo "Fzf could not be found. See https://github.com/junegunn/fzf" >&2
+    exit 1
+fi
+
+usage() {
+    echo -e "Usage: gh fc [flags]\n"
+    echo -e "Flags:"
+    echo -e "  -h, --help\t\t\tDisplay this help"
+    echo -e "  -a, --all-affiliations\tFetch repositories for all affiliations: 'Owner', 'Organization Member', 'Collaborator'). Defaults to 'Owner'"
+}
+
+AFFILIATIONS=("OWNER")
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -a|--all-affiliations)
+      AFFILIATIONS+=("ORGANIZATION_MEMBER" "COLLABORATOR")
+      shift
+      ;;
+    *)
+      echo "Unknown argument or flag $1"
+      exit 1
+      ;;
+  esac
+done
+
+QUERY="
+    query(\$endCursor: String) {
+      viewer {
+        repositories(first: 100, after: \$endCursor, affiliations:[${AFFILIATIONS[*]}], ownerAffiliations:[${AFFILIATIONS[*]}]) {
+          nodes { name, sshUrl }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  "
+  
+TEMPLATE="
+   {{- range \$repo := .data.viewer.repositories.nodes -}}
+     {{- printf \"%s\t%s\n\" \$repo.name \$repo.sshUrl -}}
+   {{- end -}}
+  "
+
+get_repo() {
+  local repositories
+  repositories="$(exec gh api graphql -f query="${QUERY}" --paginate --template="${TEMPLATE}" | column -t)" || return 1
+  fzf --ansi --prompt '> ' --header="Select repository to clone or use CTRL-C to cancel" <<<"$repositories"
+}
+
+repo="$(get_repo)"
+git clone "${repo##* }"
